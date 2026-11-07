@@ -3,10 +3,16 @@
 //   ② v2.13.0「聊天背景」设置页的「循环视频」组（vm + React 桩真渲染一遍面板，
 //      fetch 桩覆盖 /videos、/set、/videos/delete、/videos/roots）
 import fs from 'node:fs'
-import { homedir } from 'node:os'
+import os from 'node:os'
 import vm from 'node:vm'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const TMP_HOME = fs.mkdtempSync(join(os.tmpdir(), 'dsh-wallpaper-panel-'))
+process.env.DSH_HOME = TMP_HOME
+process.on('exit', () => {
+  try { fs.rmSync(TMP_HOME, { recursive: true, force: true }) } catch {}
+})
 
 const SRC = new URL('../lib/index.js', import.meta.url)
 const m = await import(SRC)
@@ -45,7 +51,7 @@ for (const [input, want] of cases) {
 console.log('\n=== 丢图目录 + 图片清单 ===')
 const dir = m.__imageDir()
 console.log('  丢图目录:', dir)
-const expectedDir = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'chat-wallpaper').replace(/\\/g, '/')
+const expectedDir = join(TMP_HOME, 'chat-wallpaper').replace(/\\/g, '/')
 ok(typeof dir === 'string' && dir === expectedDir, '目录在 $DSH_HOME 下', dir === expectedDir ? '' : `期望 ${expectedDir}`)
 console.log('  当前目录里的图:', JSON.stringify(m.__listImages()))
 console.log('  （现在没图是正常的 —— 用户丢进去就会出现在设置面板里）')

@@ -9,15 +9,39 @@ This is an **XTDS fork**, not an official upstream release. It is based on
 [LeeRolling/dsh-boot-suite](https://github.com/LeeRolling/dsh-boot-suite) at
 `baec191` / `v2.16.11`. Package name: `xtds-start-dsh` (the old name
 `xtds-boot-suite` is kept only for uninstall compatibility); version: `0.1.0`;
-`private: true`. It is not published to npm or a public plugin store. A
-local-only index can expose it to DSH's Discover page for testing.
+`private: true`. It is not published to npm or a public plugin store, but it
+can be installed directly from this GitHub repository. A local-only index can
+also expose it to DSH's Discover page for testing.
 
 The original warm-white visual and narrative were created by **沈宏宏
 (@6shenhonghong9)**. Upstream merging, fixes and maintenance are by
 **LeeRolling**. XTDS only customizes the engineering and default behavior.
 See [CREDITS.md](CREDITS.md) for full attribution and licensing.
 
-## Try it from DSH Discover (recommended)
+## Install directly from GitHub (recommended)
+
+DSH's plugin installer accepts a Git repository address. No npm package or
+source archive is required.
+
+1. Open the **Plugins** page in DeepSeek Harness.
+2. Open the arrow next to **Add plugin** and choose **Install a third-party plugin**.
+3. Paste:
+
+   ```text
+   https://github.com/XTrump-DSH-Ecosystem/xtds-start-dsh.git
+   ```
+
+4. Click **Install**, then **Enable now** when it finishes.
+5. If DSH asks for a restart, fully quit and reopen it.
+
+Notes:
+
+- `private: true` only blocks `npm publish`; it does not block Git installs.
+- DSH uses pnpm to clone the repository and read the root `package.json`.
+- The machine must be able to reach GitHub; a proxy may be needed in mainland China.
+- Git-installed plugins usually do not show the version-update section; uninstall and reinstall to upgrade.
+
+## Alternative: local Discover index (testing)
 
 This is not a public store: the helper starts a temporary index on
 `127.0.0.1`, and nothing is uploaded.
@@ -108,10 +132,11 @@ Offline preview does not write DSH configuration.
 
 ## Install
 
-### Fallback: Windows local install (link mode)
+### Offline: Windows local install (link mode)
 
 This fork does not use an upstream online installer and does not publish an npm
-package. If the local index is unavailable, install from the source checkout:
+package. Use the GitHub address above when possible; if the local index or
+GitHub is unavailable, install from the source checkout:
 
 1. Obtain this repository or the XTDS local release archive.
 2. Fully quit DeepSeek Harness Desktop, including the tray icon.
@@ -126,10 +151,10 @@ See [INSTALL.md](INSTALL.md) for uninstall, rollback and diagnostics.
 Quit DSH first, then:
 
 ```powershell
-dsh plugin --profile desktop add link:D:\path\to\dsh-boot-suite
+dsh plugin --profile desktop add link:D:\path\to\xtds-start-dsh
 ```
 
-> Replace `D:\path\to\dsh-boot-suite` with the actual checkout path. The folder
+> Replace `D:\path\to\xtds-start-dsh` with the actual checkout path. The folder
 > name does not have to be `dsh-boot-suite`; the package name is `xtds-start-dsh`.
 
 ## Online update and template store
@@ -152,6 +177,10 @@ Any test that touches DSH data must use a temporary `DSH_HOME` and clean it up.
 ## License and credits
 
 - Code: MIT, inherited from upstream `LICENSE`.
+- `LICENSE` separates the **Original work** copyright (沈宏宏) from the
+  **XTDS fork / derivative work** copyright (Xavier Trump). The latter covers
+  only the fork's modifications and additions; it does not claim authorship of
+  the original visual or narrative.
 - Warm-white “technical dossier” visual and narrative: 沈宏宏
   (@6shenhonghong9), original project
   [dsh-startup-screen](https://github.com/6shenhonghong9/dsh-startup-screen).
@@ -161,4 +190,5 @@ Any test that touches DSH data must use a temporary `DSH_HOME` and clean it up.
   also MIT with this fork.
 
 The upstream whale-girl, big-fish, 550C and deep-sonar templates/assets have
-been removed. Historical entries remain in [CHANGELOG.md](CHANGELOG.md) only.
+been removed. Their history remains in the upstream repository's commits and
+releases, not in this fork's current defaults.

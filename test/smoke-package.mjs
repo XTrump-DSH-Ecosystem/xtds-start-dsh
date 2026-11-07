@@ -43,6 +43,8 @@ check('repository/homepage do not point at upstream', pkg.repository === undefin
 check('package description marks XTDS custom build', /XTDS/.test(String(pkg.description || '')), pkg.description)
 check('package author credits upstream', /沈宏宏/.test(String(pkg.author || '')) && /LeeRolling/.test(String(pkg.author || '')), pkg.author)
 check('DSH bundle patch is declared', pkg.dsh && pkg.dsh.bundle && pkg.dsh.bundle.patch === './cordis.patch.yml', JSON.stringify(pkg.dsh))
+check('package files omit removed standalone docs',
+  !(pkg.files || []).includes('DESKTOP.md') && !(pkg.files || []).includes('AUDIO-FIELDS.md'))
 
 const required = [
   'lib/index.js',
@@ -70,6 +72,9 @@ const required = [
   'CREDITS.md'
 ]
 for (const rel of required) check('required file: ' + rel, exists(rel))
+for (const rel of ['docs/模板格式.md', 'docs/DSH大版本升级兼容性检查清单.md']) {
+  check('maintained doc: ' + rel, exists(rel))
+}
 
 console.log('\n[2] module / bundle identity')
 const patch = read('cordis.patch.yml')
@@ -118,6 +123,36 @@ check('default wallpaper is the XTDS warm-white asset',
 const wallpaper = read('lib/host-wallpaper.js')
 check('wallpaper exposes only one built-in image', /XTDS 暖白档案/.test(wallpaper) && !/snowgirl/i.test(wallpaper))
 
+const removedDocs = [
+  'AUDIO-FIELDS.md',
+  'DESKTOP.md',
+  'submission',
+  'docs/问题清单-第一轮反推.md',
+  'docs/引擎能力清单.md',
+  'docs/引擎v2-动效物理参数.md',
+  'docs/第一幕坐标-用户手调.md',
+  'docs/坐标系约定.md',
+  'docs/编码方式-几何数据与投影.md',
+  'docs/自动更新-需求决策.md',
+  'docs/参考链接.md',
+  'docs/术语表.md',
+  'docs/分享文案.md',
+  'docs/分享文案-B站1000字.md',
+  'docs/安装提示词-给用户的AI.md',
+  'docs/evidence/05-p1-no-hint.png',
+  'docs/evidence/06-p2-tv-glitch.png',
+  'docs/evidence/07-p2-identity-card.png'
+]
+for (const rel of removedDocs) check('removed stale doc: ' + rel, !exists(rel))
+const docsMarkdown = fs.readdirSync(path.join(ROOT, 'docs'))
+  .filter((name) => name.endsWith('.md'))
+  .sort()
+check('docs keeps only the two maintenance documents',
+  docsMarkdown.length === 2 &&
+  docsMarkdown.includes('模板格式.md') &&
+  docsMarkdown.includes('DSH大版本升级兼容性检查清单.md'),
+  docsMarkdown.join(','))
+
 console.log('\n[5] update channel is fail-closed')
 const host = read('lib/host-startup.js')
 check('updater requires XTDS_UPDATE_REPO', /process\.env\.XTDS_UPDATE_REPO/.test(host))
@@ -156,10 +191,16 @@ for (const needle of ['xtds-start-dsh-win.zip', 'xtds-start-dsh.tgz', 'SHA256SUM
 console.log('\n[7] attribution / license')
 const license = read('LICENSE')
 check('LICENSE keeps 沈宏宏 copyright', /Copyright \(c\) 2026 沈宏宏/.test(license), license.split(/\r?\n/)[2])
+check('LICENSE separates original work and derivative-work copyright',
+  /Original work（原始作品）:[\s\S]*Copyright \(c\) 2026 沈宏宏[\s\S]*XTDS fork \/ derivative work（二次创作）:[\s\S]*Copyright \(c\) 2026 Xavier Trump/.test(license))
+check('LICENSE says the fork does not claim the original visual',
+  /does not claim authorship of the original warm-white visual/i.test(license))
 const credits = read('CREDITS.md')
 check('CREDITS links upstream source', /github\.com\/LeeRolling\/dsh-boot-suite/.test(credits))
 check('CREDITS credits 沈宏宏', /沈宏宏/.test(credits))
 check('CREDITS documents XTDS modifications', /XTDS/.test(credits))
+check('CREDITS explains the two copyright scopes',
+  /原始作品（沈宏宏）/.test(credits) && /二次创作（Xavier Trump）/.test(credits))
 check('character NOTICE says it ships no ready-made character', /不包含任何现成角色/.test(read('templates/xtds-character-reveal/NOTICE.md')))
 
 console.log('\n[7b] identity example keeps the public defaults')
@@ -196,6 +237,33 @@ check('package files include both preview pages and the template snapshot',
   pkg.files.includes('preview/archive-warm.js') &&
   pkg.files.includes('config') &&
   pkg.files.includes('docs/evidence'))
+
+console.log('\n[9] GitHub direct install is documented')
+const readmeZh = read('README.md')
+const readmeEn = read('README.en.md')
+const installZh = read('INSTALL.md')
+const repoUrl = 'https://github.com/XTrump-DSH-Ecosystem/xtds-start-dsh.git'
+for (const [label, text] of [
+  ['README.md', readmeZh],
+  ['README.en.md', readmeEn],
+  ['INSTALL.md', installZh],
+]) {
+  check(label + ' links this fork GitHub repository', text.includes(repoUrl))
+}
+check('README.md names the DSH third-party plugin entry', readmeZh.includes('安装第三方插件'))
+check('README.en.md names the DSH third-party plugin entry', readmeEn.includes('Install a third-party plugin'))
+check('INSTALL.md keeps GitHub direct install as the recommended path', /## 推荐：GitHub 直装/.test(installZh))
+check('README.md no longer claims there is no online download address', !/没有默认在线下载地址/.test(readmeZh))
+
+console.log('\n[10] changelog and public docs stay slim')
+const changelog = read('CHANGELOG.md')
+check('CHANGELOG records only fork 0.1.0+',
+  /^## \[0\.1\.0\]/m.test(changelog) && !/^## \[2\./m.test(changelog))
+check('CHANGELOG links upstream history',
+  /github\.com\/LeeRolling\/dsh-boot-suite/.test(changelog))
+check('README does not claim upstream history is stored locally',
+  !/CHANGELOG\.md.*上游版本记录/.test(readmeZh) &&
+  !/Historical entries remain in \[CHANGELOG\.md\]/.test(readmeEn))
 
 console.log('\n============================')
 console.log('  通过 ' + pass + ' / 失败 ' + fail)

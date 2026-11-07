@@ -1,7 +1,20 @@
 MIT License
 
+Original work（原始作品）:
 Copyright (c) 2026 沈宏宏
+
+The warm-white "technical dossier" visual and narrative were originally
+published as dsh-startup-screen:
+https://github.com/6shenhonghong9/dsh-startup-screen
+
+XTDS fork / derivative work（二次创作）:
 Copyright (c) 2026 Xavier Trump
+
+This repository is a derivative work based on the original work above and on
+LeeRolling/dsh-boot-suite (upstream merging and maintenance). The copyright
+notice for Xavier Trump covers only the XTDS fork's modifications and
+additions; it does not claim authorship of the original warm-white visual or
+narrative.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,7 +1,7 @@
 # DSH 大版本升级兼容性检查清单
 
 > 适用：DSH 大版本更新（如 0.2.1-rc.x → V5）或小版本更新后，5～10 分钟确认 xtds-start-dsh 与第三方插件是否正常。
-> 原则：**先备份、先诊断、再升级插件**；升级当天不与插件更新/灵枢更新叠加。
+> 原则：**先备份、先诊断、再升级插件**；升级当天不与插件更新叠加。
 > 相关文件：`tools/doctor.ps1`（一键诊断）、桌面「紧急回滚-V…」bat、崩溃日志目录 `%APPDATA%\@deepseek-ai\dsh-desktop\logs\`。
 
 ---
@@ -62,20 +62,13 @@ Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\package.json" -Raw | Convert
 - [ ] 崩溃日志（若有）：`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log`
 - [ ] DSH 控制台窗口报错截图
 
-## 2. V5 专项预判（官方内置插件市场 / 记忆互通）
+## 2. V5 插件 API 预判
 
-- [ ] 第三方 `dshmarket` 仍能正常打开、安装/更新插件（官方市场若上线，两者可能并存或替代）
-- [ ] `@furongjun1999/dsh-memory`（灵枢）能加载，记忆写入/召回正常
-- [ ] 若官方记忆互通启用：
-  - [ ] system prompt 中**没有两个重复的「记忆/上下文」块**
-  - [ ] 没有同一记忆被两套机制重复注入导致超长
-  - [ ] 工具名无冲突（两边都注册 `memory_*` 类工具时）
-  - [ ] 出现冲突时，先关灵枢的 `autoRecall` / `contextWindow` 再观察，不要直接卸载
-- [ ] 插件 API 变化扫描：
-  - [ ] `dsh.profile.bundles` / `dsh.bundle.patch` 清单格式仍兼容
-  - [ ] `ctx.webServer.register` / `tapIndex` 仍可用（开机动画注入依赖它）
-  - [ ] 前端注入点（client bundle、设置页 Slot）仍存在
-  - [ ] 插件管理器行为（是否仍拒绝原地升级、安装源/镜像设置）
+- [ ] `dsh.profile.bundles` / `dsh.bundle.patch` 清单格式仍兼容
+- [ ] `ctx.webServer.register` / `tapIndex` 仍可用（开机动画注入依赖它）
+- [ ] 前端注入点（client bundle、设置页 Slot）仍存在
+- [ ] 插件管理器行为（是否仍拒绝原地升级、安装源/镜像设置）
+- [ ] 若官方内置插件市场上线，确认与本机索引/第三方安装方式不冲突
 
 ## 3. 出问题时的恢复顺序
 
@@ -87,14 +80,6 @@ Get-Content "$env:USERPROFILE\.dsh\profiles\desktop\package.json" -Raw | Convert
 
 ## 4. 结果记录（每次升级填一行）
 
-| 日期 | DSH 版本 | 插件版本 | 启动动画 | 聊天背景 | 更新链路 | 记忆/市场 | 结论 |
+| 日期 | DSH 版本 | 插件版本 | 启动动画 | 聊天背景 | 更新链路 | 插件 API / 市场 | 结论 |
 |---|---|---|---|---|---|---|---|
 |  |  |  |  |  |  |  |  |
-
-## 5. 待跟进（人工，不定期）
-
-- [ ] 上游 PR 回复：https://github.com/FuRongJun-1999/dsh-memory/pull/714 （sid 空值告警）
-- [ ] 上游 #713 已合并后的新版 npm 发布情况（灵枢升级后再观察记忆串台是否改善）
-- [ ] V5 占位符代码是否出现插件 API / 市场清单变化（出现即记录到交接文档）
-
-> 提醒规则：不设定时任务；下次对话或版本收尾时，主动提醒用户「看一眼 PR #714 有没有回复」。

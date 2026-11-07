@@ -7,7 +7,8 @@
 这是一个基于 [LeeRolling/dsh-boot-suite](https://github.com/LeeRolling/dsh-boot-suite)
 上游 `baec191` / `v2.16.11` 的 **XTDS 定制 fork**，不是上游官方版本。
 包名 `xtds-start-dsh`（旧名 `xtds-boot-suite` 仅保留作卸载兼容），版本 `0.1.0`，`private: true`，不发布 npm，也不上架公开插件商店。
-可以启动本机索引，在 DSH 的“插件 → 发现”里直接试装；本机商城不会把包上传到网络。
+可以在 DSH 的「插件 → 添加插件 → 安装第三方插件」里粘贴本仓库的 GitHub 地址直接安装；
+也可以启动本机索引，在“发现”里试装。两种方式都不需要发布到公共 npm。
 
 暖白片头的原始视觉与叙事作者是 **沈宏宏（@6shenhonghong9）**；
 上游合并、修复与维护者是 **LeeRolling**。XTDS 只做工程结构与默认行为定制，
@@ -15,7 +16,29 @@
 
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-## 插件商城试装（推荐先试）
+## GitHub 直装（推荐）
+
+DSH 的插件安装器支持 Git 地址，不需要 npm 包，也不需要先下载源码。
+
+1. 打开 DeepSeek Harness 的 **插件** 页。
+2. 点 **添加插件** 旁边的下拉箭头，选择 **安装第三方插件**。
+3. 粘贴本仓库地址：
+
+   ```text
+   https://github.com/XTrump-DSH-Ecosystem/xtds-start-dsh.git
+   ```
+
+4. 点 **安装**；完成后点 **立即启用**。
+5. 如果 DSH 提示需要重启，完全退出后重新打开。
+
+说明：
+
+- `private: true` 只阻止发布到 npm，不影响 GitHub 直装。
+- 安装时 DSH 会通过 pnpm 克隆仓库并读取根目录的 `package.json`。
+- 需要本机能访问 GitHub；国内网络可能需要代理。
+- Git 直装通常不显示版本更新区块，升级时卸载后重新安装即可。
+
+## 备选：本机插件商城试装
 
 这不是公开商店，也不会发布 npm 包。它只是在你自己的电脑上临时启动一个
 `127.0.0.1` 索引，让 DSH 的“发现”页能够识别并安装本插件。
@@ -115,10 +138,10 @@
 
 ## 其他安装方式
 
-### 备用：Windows 本地安装（link 方式）
+### 离线：Windows 本地安装（link 方式）
 
-本 fork 不提供上游在线安装地址，也不发布 npm 包。本机商城不可用时，可以改用
-源码目录的 link 安装：
+本 fork 不提供上游在线安装地址，也不发布 npm 包；GitHub 直装使用上面的本仓库地址。
+本机商城或 GitHub 都不可用时，可以改用源码目录的 link 安装：
 
 1. 取得本仓库或 XTDS 本地发布包。
 2. **完全退出** DeepSeek Harness Desktop（窗口和托盘都要退出）。
@@ -134,10 +157,10 @@
 先完全退出 DSH，然后：
 
 ```powershell
-dsh plugin --profile desktop add link:D:\path\to\dsh-boot-suite
+dsh plugin --profile desktop add link:D:\path\to\xtds-start-dsh
 ```
 
-> 把 `D:\path\to\dsh-boot-suite` 换成本仓库的实际绝对路径；目录名不必叫
+> 把 `D:\path\to\xtds-start-dsh` 换成本仓库的实际绝对路径；目录名不必叫
 > `dsh-boot-suite`。包名以 `package.json` 的 `xtds-start-dsh` 为准。
 
 桌面端 profile 在运行时会锁定 `package.json`，不要边运行边写 profile。
@@ -177,6 +200,8 @@ docs/evidence/               当前视觉验收截图
 ## 许可与署名
 
 - 代码：MIT，沿用上游 `LICENSE`。
+- `LICENSE` 分栏标注：**原始作品**版权归沈宏宏；**XTDS fork / 二次创作**
+  版权归 Xavier Trump，仅覆盖 fork 的修改与新增部分，不主张原始视觉为 XTDS 原创。
 - 暖白「技术档案」视觉与叙事：沈宏宏（@6shenhonghong9），原作
   [dsh-startup-screen](https://github.com/6shenhonghong9/dsh-startup-screen)。
 - 上游合并、修复与维护：LeeRolling，
@@ -185,4 +210,4 @@ docs/evidence/               当前视觉验收截图
 - 用户导入的图片/视频：版权归用户或原权利人，仅保存在本机。
 
 上游历史版本中的鲸鱼娘、全景大肥鱼、550C、深海声呐等模板和素材已从本 fork 删除。
-相关历史只保留在 [CHANGELOG.md](CHANGELOG.md) 的上游版本记录中，不代表当前默认内容。
+相关历史见上游仓库的提交历史与 Release，不代表当前默认内容。

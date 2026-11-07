@@ -43,8 +43,6 @@
     "INSTALL.md",
     "CREDITS.md",
     "CHANGELOG.md",
-    "DESKTOP.md",
-    "AUDIO-FIELDS.md",
     "LICENSE"
   ],
   "scripts": {
