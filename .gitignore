@@ -1,0 +1,38 @@
+# Dependencies and generated output
+node_modules/
+dist/
+.local-market/
+03-发布包/
+backups/
+
+# Local runtime configuration and private identity
+**/dsh-startup-identity.json
+**/dsh-startup.json
+**/chat-wallpaper.json
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Archives, logs and temporary files
+*.tgz
+*.zip
+*.bak
+*.bak.*
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tmp
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/

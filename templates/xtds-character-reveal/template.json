@@ -1,0 +1,305 @@
+{
+  "schemaVersion": 2,
+  "id": "xtds-character-reveal",
+  "name": "自定义形象 · 闪烁揭示",
+  "author": "XTDS",
+  "license": "MIT",
+  "version": "1.0.0",
+  "description": "数据驱动的第二幕形象槽位：扫描线、闪烁、故障与淡出揭示一张可替换的立绘。默认不启用，也不内置任何角色；在设置页点「导入自定义形象」即可替换。",
+  "tags": [
+    "xtds",
+    "character",
+    "reveal",
+    "slot",
+    "optional"
+  ],
+  "duration": 5600,
+  "theme": {
+    "mode": "dark",
+    "bg": "#020407",
+    "bg2": "#07111a",
+    "ink": "#edf8ff",
+    "inkSoft": "#9cbbcf",
+    "muted": "#587287",
+    "hair": "rgba(125,226,255,0.24)",
+    "accent": "#7de2ff",
+    "glitchA": "#ff4d6d",
+    "glitchB": "#4f7dff"
+  },
+  "segments": [
+    {
+      "name": "扫描锁定",
+      "from": 0,
+      "to": 1500
+    },
+    {
+      "name": "形象显影",
+      "from": 1500,
+      "to": 4300
+    },
+    {
+      "name": "收束退场",
+      "from": 4300,
+      "to": 5600
+    }
+  ],
+  "layers": [
+    {
+      "id": "bg",
+      "type": "panel",
+      "pos": [
+        640,
+        360
+      ],
+      "panelW": 1280,
+      "panelH": 720,
+      "fill": "#020407",
+      "radius": 0,
+      "keyframes": [
+        {
+          "t": 0,
+          "opacity": 1
+        },
+        {
+          "t": 5600,
+          "opacity": 1
+        }
+      ]
+    },
+    {
+      "id": "character-slot",
+      "type": "image",
+      "pos": [
+        640,
+        360
+      ],
+      "size": [
+        1280,
+        720
+      ],
+      "src": "character-slot.svg",
+      "fallbackSrc": "character-slot.svg",
+      "keyframes": [
+        {
+          "t": 0,
+          "opacity": 0,
+          "scale": 1.04
+        },
+        {
+          "t": 500,
+          "opacity": 0,
+          "scale": 1.035
+        },
+        {
+          "t": 560,
+          "opacity": 0.7,
+          "scale": 1.03
+        },
+        {
+          "t": 610,
+          "opacity": 0.06,
+          "scale": 1.03
+        },
+        {
+          "t": 680,
+          "opacity": 0.82,
+          "scale": 1.025
+        },
+        {
+          "t": 730,
+          "opacity": 0.18,
+          "scale": 1.025
+        },
+        {
+          "t": 800,
+          "opacity": 0.92,
+          "scale": 1.02
+        },
+        {
+          "t": 850,
+          "opacity": 0.38,
+          "scale": 1.02
+        },
+        {
+          "t": 930,
+          "opacity": 1,
+          "scale": 1.015
+        },
+        {
+          "t": 1400,
+          "opacity": 1,
+          "scale": 1,
+          "ease": "outCubic"
+        },
+        {
+          "t": 4400,
+          "opacity": 1,
+          "scale": 1
+        },
+        {
+          "t": 5000,
+          "opacity": 0,
+          "scale": 1.015,
+          "ease": "inCubic"
+        }
+      ]
+    },
+    {
+      "id": "eyebrow",
+      "type": "text",
+      "text": "XTDS // REVEAL ENGINE",
+      "pos": [
+        640,
+        360
+      ],
+      "align": "left",
+      "color": "#7de2ff",
+      "font": {
+        "size": 12,
+        "weight": 500,
+        "tracking": 0.22
+      },
+      "keyframes": [
+        {
+          "t": 180,
+          "opacity": 0,
+          "offsetX": -586,
+          "offsetY": -304
+        },
+        {
+          "t": 760,
+          "opacity": 0.9,
+          "offsetX": -586,
+          "offsetY": -312,
+          "ease": "outCubic"
+        },
+        {
+          "t": 4300,
+          "opacity": 0.9,
+          "offsetX": -586,
+          "offsetY": -312
+        },
+        {
+          "t": 4800,
+          "opacity": 0,
+          "offsetX": -586,
+          "offsetY": -318
+        }
+      ]
+    },
+    {
+      "id": "slot-title",
+      "type": "text",
+      "text": "CUSTOM CHARACTER",
+      "pos": [
+        640,
+        360
+      ],
+      "align": "center",
+      "color": "#edf8ff",
+      "font": {
+        "size": 28,
+        "weight": 500,
+        "tracking": 0.3
+      },
+      "keyframes": [
+        {
+          "t": 1200,
+          "opacity": 0,
+          "offsetY": 250
+        },
+        {
+          "t": 1820,
+          "opacity": 1,
+          "offsetY": 234,
+          "ease": "outCubic"
+        },
+        {
+          "t": 4200,
+          "opacity": 1,
+          "offsetY": 234
+        },
+        {
+          "t": 4700,
+          "opacity": 0,
+          "offsetY": 226
+        }
+      ]
+    },
+    {
+      "id": "slot-hint",
+      "type": "text",
+      "text": "SETTINGS → STARTUP ANIMATION → IMPORT CHARACTER",
+      "pos": [
+        640,
+        360
+      ],
+      "align": "center",
+      "color": "#7f9eb2",
+      "font": {
+        "size": 10,
+        "weight": 400,
+        "tracking": 0.2
+      },
+      "keyframes": [
+        {
+          "t": 1500,
+          "opacity": 0,
+          "offsetY": 284
+        },
+        {
+          "t": 2100,
+          "opacity": 0.82,
+          "offsetY": 274,
+          "ease": "outCubic"
+        },
+        {
+          "t": 4200,
+          "opacity": 0.82,
+          "offsetY": 274
+        },
+        {
+          "t": 4700,
+          "opacity": 0,
+          "offsetY": 268
+        }
+      ]
+    }
+  ],
+  "effects": [
+    {
+      "type": "vignette",
+      "opacity": 0.62
+    },
+    {
+      "type": "scanline",
+      "opacity": 0.2
+    },
+    {
+      "type": "crt",
+      "opacity": 0.24,
+      "from": 0,
+      "to": 3600
+    },
+    {
+      "type": "glitch",
+      "opacity": 0.78,
+      "speed": 1.35,
+      "from": 520,
+      "to": 1450
+    },
+    {
+      "type": "hud",
+      "opacity": 0.42,
+      "from": 0,
+      "to": 3400
+    },
+    {
+      "type": "bloom",
+      "opacity": 0.45,
+      "speed": 0.85,
+      "from": 1000,
+      "to": 4300
+    }
+  ]
+}

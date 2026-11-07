@@ -1,0 +1,444 @@
+﻿#Requires -Version 5.1
+<#
+  xtds-start-dsh —— 一键安装（XTDS 定制版）
+
+  用法：双击仓库根目录的「安装.cmd」，或者：
+        powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1
+        powershell -NoProfile -ExecutionPolicy Bypass -File tools\install.ps1 -CheckOnly   # 只看计划，不动手
+
+  它做什么：
+    1. 自动找到 DSH 的命令行（PATH 里没有也没关系，会去安装目录找）
+    2. 找到已经初始化过的 profile（web / desktop）
+    3. 桌面端在跑就先停下，要求你完全退出
+    4. 卸掉同类的旧插件（上游 dsh-boot-suite / dsh-startup-screen / dsh-chat-wallpaper）
+    5. 以 link: 方式安装本仓库
+    6. 修正 profile 的 bundles 列表（DSH 靠它决定加载哪些插件）
+    7. 自检并告诉你下一步
+#>
+[CmdletBinding()]
+param([switch]$CheckOnly, [switch]$Force, [string[]]$Profiles)
+
+$ErrorActionPreference = 'Stop'
+function Say($m) { Write-Host $m }
+function Die($m) { Write-Host ('[x] ' + $m) -ForegroundColor Red; exit 1 }
+
+# v2.16.2：代理探测。开着代理时 pnpm 访问 npm registry 可能长时间卡住（用户实测第二步无响应）。
+function Get-ProxyInfo {
+  $marks = @()
+  foreach ($n in @('HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','http_proxy','https_proxy','all_proxy')) {
+    $v = [Environment]::GetEnvironmentVariable($n)
+    if ($v) { $marks += ($n + '=' + $v) }
+  }
+  try {
+    $reg = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -ErrorAction Stop
+    if ($reg.ProxyEnable -eq 1 -and $reg.ProxyServer) { $marks += ('系统代理=' + $reg.ProxyServer) }
+  } catch {}
+  return ($marks -join '；')
+}
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+if (-not (Test-Path (Join-Path $RepoRoot 'package.json'))) { Die ('这不像插件目录：' + $RepoRoot) }
+if (-not (Test-Path (Join-Path $RepoRoot 'lib\index.js'))) { Die '源码不完整（缺 lib\index.js），你下载的可能是残缺的压缩包' }
+
+# 注意：Windows PowerShell 5.1 的 Get-Content 会按 ANSI 解码 UTF-8 文件，中文会糊成乱码、JSON 直接解析失败。
+# 统一用 [System.IO.File]::ReadAllText —— 它按 UTF-8 读。
+$pkgSelf = [System.IO.File]::ReadAllText((Join-Path $RepoRoot 'package.json')) | ConvertFrom-Json
+$pluginName = 'xtds-start-dsh'
+$retiredPluginNames = @('xtds-boot-suite', 'dsh-boot-suite', 'dsh-startup-screen', 'dsh-chat-wallpaper')
+Say ('xtds-start-dsh v' + $pkgSelf.version)
+Say ('仓库位置：' + $RepoRoot)
+
+if ($CheckOnly) { Say '[检查模式] 只报告计划，不修改任何东西' }
+
+# ── 1. 找 DSH 命令行 ────────────────────────────────────────────────────────
+function Find-DshCli {
+  # 优先 DSH 安装目录里的官方 CLI（跳过 PATH 里的第三方包装脚本，如 ai-manager 的 dsh.ps1）
+  $official = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'),
+    (Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles')) 'DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'),
+    (Join-Path ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')) 'DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd')
+  )
+  foreach ($op in $official) { if ($op -and (Test-Path $op)) { return $op } }
+  $c = Get-Command dsh -ErrorAction SilentlyContinue
+  if ($c -and $c.Source) {
+    if ($c.Source -match '\.ai-manager') { $c = $null } else { return $c.Source }
+  }
+
+  # 桌面端可能装在任意目录：命令行 / 常见位置 / 注册表 / 正在运行的进程 / 有界递归
+  $candidates = New-Object System.Collections.Generic.List[string]
+  $roots = @(
+    (Join-Path $env:LOCALAPPDATA 'Programs'),
+    ([Environment]::GetEnvironmentVariable('ProgramFiles')),
+    ([Environment]::GetEnvironmentVariable('ProgramFiles(x86)')),
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages')
+  )
+  foreach ($r in $roots) {
+    if (-not $r -or -not (Test-Path $r)) { continue }
+    $candidates.Add((Join-Path $r 'DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd'))
+  }
+  $uninstallRoots = @(
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+    'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+  )
+  foreach ($u in $uninstallRoots) {
+    try {
+      Get-ItemProperty $u -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*DeepSeek*' -and $_.InstallLocation } | ForEach-Object {
+        $candidates.Add((Join-Path $_.InstallLocation 'resources\runtime\cli\bin\dsh.cmd'))
+      }
+    } catch {}
+  }
+  try {
+    Get-Process -ErrorAction SilentlyContinue | ForEach-Object {
+      if ($_.Path -and ($_.ProcessName -like '*DeepSeek*' -or $_.ProcessName -like '*dsh*')) {
+        $candidates.Add((Join-Path (Split-Path -Parent $_.Path) 'resources\runtime\cli\bin\dsh.cmd'))
+      }
+    }
+  } catch {}
+  foreach ($cand in $candidates) { if (Test-Path -LiteralPath $cand) { return $cand } }
+
+  # 有界递归兜底（深度 4）
+  foreach ($r in $roots) {
+    if (-not $r -or -not (Test-Path $r)) { continue }
+    try {
+      $hit = Get-ChildItem -LiteralPath $r -Filter 'dsh.cmd' -Recurse -Depth 4 -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '[/\\]cli[/\\]bin[/\\]dsh\.cmd$' } | Select-Object -First 1
+      if ($hit) { return $hit.FullName }
+    } catch {}
+  }
+  return $null
+}
+
+$dsh = Find-DshCli
+$ManualMode = $false
+if (-not $dsh) {
+  Say '[!] 没找到 DeepSeek Harness 的命令行（dsh）。'
+  Say '    不一定是没装：精简安装 / 便携版可能不带 CLI。'
+  Say '    本脚本改用「手动安装」：直接改 profile 配置 + 建目录联接，效果一样。'
+  $ManualMode = $true
+} else {
+  Say ('DSH 命令行：' + $dsh)
+}
+
+# ── 2. 找 profile ───────────────────────────────────────────────────────────
+$profilesRoot = Join-Path $env:USERPROFILE '.dsh\profiles'
+if (-not (Test-Path $profilesRoot)) {
+  Die '还没初始化过 profile。请先打开一次 DeepSeek Harness Desktop，完全退出后再运行本脚本。'
+}
+
+$targets = @()
+if ($Profiles) {
+  foreach ($p in $Profiles) { if (Test-Path (Join-Path $profilesRoot $p)) { $targets += $p } }
+} else {
+  foreach ($p in @('desktop', 'web')) { if (Test-Path (Join-Path $profilesRoot $p)) { $targets += $p } }
+}
+if ($targets.Count -eq 0) { Die '没有找到已初始化的 profile（desktop / web）。先打开一次桌面端再退出。' }
+Say ('要装的 profile：' + ($targets -join '、'))
+
+# ── 3. 桌面端必须先完全退出 ─────────────────────────────────────────────────
+if ($targets -contains 'desktop') {
+  $running = @(Get-Process -Name 'DeepSeek Harness' -ErrorAction SilentlyContinue)
+  if ($running.Count -gt 0 -and -not $CheckOnly -and -not $Force) {
+    Die ('桌面端还在运行（' + $running.Count + ' 个进程）。请先完全退出 DeepSeek Harness Desktop 再双击安装；确实要热装可加 -Force（不推荐，装完手动重启）。')
+  }
+  if ($running.Count -gt 0 -and $Force) {
+    Say ('[!] 桌面端还在运行（' + $running.Count + ' 个进程）：-Force 热装继续；装完请手动重启 DSH 让新代码生效。')
+  }
+  if ($running.Count -gt 0 -and $CheckOnly) { Say '（检查模式）桌面端正在运行 —— 真正安装前建议先完全退出' }
+}
+
+# ── 3.5 更新前的紧急回滚 checkpoint（v2.13.3）──────────────────────────────
+# 每次「换版本安装」前，把当前能用的版本记在桌面一个回滚按钮里：
+#   新版装不上 / 装完 DSH 打不开 -> 完全退出 DSH 后双击按钮，link 回旧版本目录。
+# 安装成功后清理旧按钮，保证桌面最多只有一个；安装失败则保留所有旧按钮。
+function Get-InstalledPlugin([string]$profileDir) {
+  $inst = Join-Path $profileDir ('node_modules\' + $pluginName)
+  $item = $null
+  if (Test-Path $inst) { $item = Get-Item $inst -Force -ErrorAction SilentlyContinue }
+  $pkgPath = $null
+  if ($item -and @('Junction', 'SymbolicLink') -contains $item.LinkType -and $item.Target) {
+    $pkgPath = @($item.Target)[0]
+  }
+  if (-not $pkgPath) {
+    $pj = Join-Path $profileDir 'package.json'
+    if (Test-Path $pj) {
+      try {
+        $o = [System.IO.File]::ReadAllText($pj, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        $depProp = $o.dependencies.PSObject.Properties[$pluginName]
+        $dep = if ($depProp) { [string]$depProp.Value } else { '' }
+        if ($dep -match '^link:(.+)$') { $pkgPath = $Matches[1] }
+      } catch {}
+    }
+  }
+  if (-not $pkgPath) { return $null }
+  $pkgPath = ($pkgPath -replace '/', '\').TrimEnd('\')
+  $pjPath = Join-Path $pkgPath 'package.json'
+  if (-not (Test-Path $pjPath)) { return $null }
+  $ver = $null
+  try { $ver = [string](([System.IO.File]::ReadAllText($pjPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json).version) } catch {}
+  return @{ path = $pkgPath; version = $ver }
+}
+
+# v2.13.11：不要只信 dsh 命令行的退出码。新版 DSH（如 0.2.1-rc.3）的 dsh 命令行
+# 可能不解析任何子命令：直接打印 web 地址、退出码 0，却没装插件；旧逻辑会误判成功，
+# 留下「bundles 有、dependencies/node_modules 没有」的危险不一致状态。
+# 这里以 profile 的真实文件为准做安装后校验，失败就必须回滚或改手动安装。
+function Test-InstalledOk([string]$profileDir) {
+  $inst = Join-Path $profileDir ('node_modules\' + $pluginName)
+  if (-not (Test-Path $inst)) { return $false }
+  $pj = Join-Path $profileDir 'package.json'
+  if (-not (Test-Path $pj)) { return $false }
+  try {
+    $o = [System.IO.File]::ReadAllText($pj, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+    if (-not $o.dependencies -or -not $o.dependencies.PSObject.Properties[$pluginName]) { return $false }
+    $ver = [string](([System.IO.File]::ReadAllText((Join-Path $inst 'package.json'), [System.Text.Encoding]::UTF8) | ConvertFrom-Json).version)
+    return ($ver -eq [string]$pkgSelf.version)
+  } catch { return $false }
+}
+
+$checkpoint = $null
+if (-not $CheckOnly -and -not $env:DSH_BOOT_SUITE_ROLLBACK) {
+  foreach ($p in $targets) {
+    $info = Get-InstalledPlugin (Join-Path $profilesRoot $p)
+    if ($info -and $info.version -and $info.version -ne [string]$pkgSelf.version) { $checkpoint = $info; break }
+  }
+  if ($checkpoint) {
+    $rollbackSrc = Join-Path $PSScriptRoot 'rollback-version.ps1'
+    $updatesRoot = Join-Path $env:USERPROFILE '.dsh\boot-suite-updates'
+    if (Test-Path $rollbackSrc) {
+      New-Item -ItemType Directory -Force -Path $updatesRoot | Out-Null
+      Copy-Item $rollbackSrc (Join-Path $updatesRoot 'rollback-version.ps1') -Force
+      $desk = [Environment]::GetFolderPath('Desktop')
+      if (-not $desk) { $desk = Join-Path $env:USERPROFILE 'Desktop' }
+      New-Item -ItemType Directory -Force -Path $desk | Out-Null
+      $batName = '紧急回滚-V' + $checkpoint.version + '（先完全退出 DSH 再双击）.cmd'
+      $batPath = Join-Path $desk $batName
+      $rollbackPs = Join-Path $updatesRoot 'rollback-version.ps1'
+      # F-05：EncodedCommand 里必须用单引号字面量（PowerShell 单引号内不展开 $()/变量），
+      # 单引号本身双写转义；否则路径里的 $(...) 会被当命令执行。
+      $sq = { param([string]$v) "'" + ([string]$v -replace "'", "''") + "'" }
+      $inner = '& ' + (& $sq $rollbackPs) + ' -TargetPkg ' + (& $sq ([string]$checkpoint.path)) + ' -Profile ' + (& $sq ([string]$targets[0]))
+      $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($inner))
+      $lines = @(
+        '@echo off',
+        'setlocal',
+        ('title xtds-start-dsh rollback checkpoint v' + $checkpoint.version),
+        'echo ============================================================',
+        'echo  xtds-start-dsh emergency rollback checkpoint',
+        ('echo  Target (previous working version): v' + $checkpoint.version),
+        'echo  If the new version cannot install or DSH cannot open,',
+        'echo  fully quit DSH (window + tray), then double-click this file.',
+        'echo  It only switches the plugin version; your settings stay.',
+        'echo ============================================================',
+        ('powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ' + $encoded),
+        'echo.',
+        'pause'
+      )
+      [System.IO.File]::WriteAllLines($batPath, $lines, (New-Object System.Text.ASCIIEncoding))
+      $checkpoint.bat = $batPath
+      Say ''
+      Say ('[回滚保护] 当前 v' + $checkpoint.version + ' 已记成桌面按钮：' + $batName)
+      Say '           新版装不上或打不开 DSH 时，完全退出 DSH 后双击它即可回滚。'
+    }
+  }
+}
+
+$spec = 'link:' + ($RepoRoot -replace '\\', '/')
+
+function Fix-Bundles([string]$profileDir) {
+  $pj = Join-Path $profileDir 'package.json'
+  if (-not (Test-Path $pj)) { return }
+  $pkg = [System.IO.File]::ReadAllText($pj) | ConvertFrom-Json
+  if (-not $pkg.dsh -or -not $pkg.dsh.profile) { return }
+  $keep = @()
+  foreach ($b in @($pkg.dsh.profile.bundles)) {
+    if ($retiredPluginNames -contains $b) { continue }
+    $keep += $b
+  }
+  if ($keep -notcontains $pluginName) {
+    $idx = [array]::IndexOf($keep, 'dsh-plugin-desktop-notify')
+    if ($idx -gt 0) { $keep = @($keep[0..($idx-1)]) + $pluginName + @($keep[$idx..($keep.Count-1)]) }
+    else { $keep += $pluginName }
+  }
+  $pkg.dsh.profile.bundles = $keep
+  [System.IO.File]::WriteAllText($pj, ($pkg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Remove-Manual([string]$profileDir, [string]$name) {
+  $pj = Join-Path $profileDir 'package.json'
+  if (-not (Test-Path $pj)) { return }
+  $pkg = [System.IO.File]::ReadAllText($pj) | ConvertFrom-Json
+  if ($pkg.dependencies) { $pkg.dependencies.PSObject.Properties.Remove($name) }
+  if ($pkg.dsh -and $pkg.dsh.profile -and $pkg.dsh.profile.bundles) {
+    $keep = @()
+    foreach ($b in @($pkg.dsh.profile.bundles)) { if ($b -ne $name) { $keep += $b } }
+    $pkg.dsh.profile.bundles = $keep
+  }
+  [System.IO.File]::WriteAllText($pj, ($pkg | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+  $inst = Join-Path $profileDir ('node_modules' + [char]92 + $name)
+  if (Test-Path $inst) {
+    $item = Get-Item $inst -Force
+    if ($item.LinkType) { cmd /c rmdir "$inst" | Out-Null } else { Remove-Item $inst -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Install-Manual([string]$profileDir) {
+  $pj = Join-Path $profileDir 'package.json'
+  $pkgObj = [System.IO.File]::ReadAllText($pj) | ConvertFrom-Json
+  if (-not $pkgObj.PSObject.Properties['dependencies']) {
+    $pkgObj | Add-Member -NotePropertyName dependencies -NotePropertyValue ([pscustomobject]@{}) -Force
+  }
+  $pkgObj.dependencies | Add-Member -NotePropertyName $pluginName -NotePropertyValue $spec -Force
+  [System.IO.File]::WriteAllText($pj, ($pkgObj | ConvertTo-Json -Depth 20), (New-Object System.Text.UTF8Encoding($false)))
+  $nm = Join-Path $profileDir 'node_modules'
+  if (-not (Test-Path $nm)) { New-Item -ItemType Directory -Force -Path $nm | Out-Null }
+  $linkPath = Join-Path $nm $pluginName
+  if (Test-Path $linkPath) {
+    $item = Get-Item $linkPath -Force
+    if ($item.LinkType) { cmd /c rmdir "$linkPath" | Out-Null }
+    else { Move-Item $linkPath (Join-Path $bk.FullName 'node_modules-old') -Force -ErrorAction SilentlyContinue }
+  }
+  cmd /c mklink /J "$linkPath" "$RepoRoot" | Out-Null
+  if (-not (Test-Path $linkPath)) {
+    Copy-Item (Join-Path $bk.FullName 'package.json') $pj -Force
+    Die '手动安装失败：无法创建 node_modules 目录联接（可能被杀毒软件拦截）'
+  }
+  Say ('        ok -> ' + $linkPath)
+}
+foreach ($profile in $targets) {
+  $profileDir = Join-Path $profilesRoot $profile
+  Say ''
+  Say ('=== profile: ' + $profile + ' ===')
+
+  if ($CheckOnly) {
+    Say ('  会执行：dsh plugin --profile ' + $profile + ' remove 上游 dsh-boot-suite / dsh-startup-screen / dsh-chat-wallpaper（装过才卸）')
+    Say ('  会执行：dsh plugin --profile ' + $profile + ' add ' + $spec)
+    continue
+  }
+
+  New-Item -ItemType Directory -Force -Path (Join-Path $profileDir ('_backup-install-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) | Out-Null
+  $bk = Get-ChildItem $profileDir -Directory -Filter '_backup-install-*' | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  Copy-Item (Join-Path $profileDir 'package.json') $bk.FullName -Force
+  Copy-Item (Join-Path $profileDir 'pnpm-lock.yaml') $bk.FullName -Force -ErrorAction SilentlyContinue
+
+  Say '  [1/3] 检查并卸掉同类旧插件…'
+  foreach ($old in $retiredPluginNames) {
+    $installedOld = $false
+    try {
+      $pjTmp = [System.IO.File]::ReadAllText((Join-Path $profileDir 'package.json')) | ConvertFrom-Json
+      if ($pjTmp.dependencies -and $pjTmp.dependencies.PSObject.Properties[$old]) { $installedOld = $true }
+    } catch {}
+    if (-not $installedOld) { Say ('        跳过 ' + $old + '（未安装）'); continue }
+    Say ('        卸载旧插件 ' + $old + ' …')
+    if ($ManualMode) {
+      Remove-Manual $profileDir $old
+      Say '        已直接清理（未找到 DSH 命令行）'
+      continue
+    }
+    $eapOld = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $outRm = ''
+    try { $outRm = (& $dsh plugin --profile $profile remove $old 2>&1 | Out-String) } catch { $outRm = $_.Exception.Message }
+    if ($outRm.Trim()) { $outRm.Trim().Split([char]10) | ForEach-Object { '        ' + $_ } }
+    if ($outRm -match 'managed exclusively' -or $outRm -match 'not installed' -or $outRm -match '未安装') {
+      Remove-Manual $profileDir $old
+      Say '        已改为手动清理（命令行不允许管理 desktop profile）'
+    }
+    $ErrorActionPreference = $eapOld
+  }
+
+  Say '  [2/3] 安装本插件（link 方式，改代码即生效）…'
+  $proxyInfo = Get-ProxyInfo
+  if ($proxyInfo -and -not $ManualMode) {
+    Say ''
+    Say '  [提示] 检测到代理：' + $proxyInfo
+    Say '         已知问题：开着代理时，安装这一步（pnpm 访问 npm registry）可能长时间卡住。'
+    Say '         如果卡住超过 2 分钟：按 Ctrl+C 关窗口 → 暂时关闭代理 → 重新双击本助手。'
+    Say '         也可以把 registry.npmjs.org 设为直连/绕过代理。'
+    Say ''
+    for ($pi = 5; $pi -ge 1; $pi--) { Write-Host ('         5 秒后继续…（' + $pi + '）'); Start-Sleep -Seconds 1 }
+  }
+  $prevFetchTimeout = [Environment]::GetEnvironmentVariable('npm_config_fetch_timeout')
+  $prevFetchRetries = [Environment]::GetEnvironmentVariable('npm_config_fetch_retries')
+  if (-not $ManualMode) {
+    $env:npm_config_fetch_timeout = '30000'
+    $env:npm_config_fetch_retries = '2'
+  }
+  if ($ManualMode) {
+    Install-Manual $profileDir
+  } else {
+    $eapAdd = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $outAdd = ''
+    try { $outAdd = (& $dsh plugin --profile $profile add $spec 2>&1 | Out-String) } catch { $outAdd = $_.Exception.Message }
+    if ($outAdd.Trim()) { $outAdd.Trim().Split([char]10) | ForEach-Object { '        ' + $_ } }
+    $addExit = $LASTEXITCODE
+    if ($addExit -ne 0) {
+      Say '        第一次安装没成功，改用 npm 国内镜像重试一次…'
+      $prevRegistry = [Environment]::GetEnvironmentVariable('npm_config_registry')
+      $env:npm_config_registry = 'https://registry.npmmirror.com'
+      try { $outAdd = (& $dsh plugin --profile $profile add $spec 2>&1 | Out-String) } catch { $outAdd = $_.Exception.Message }
+      $addExit = $LASTEXITCODE
+      if ($outAdd.Trim()) { $outAdd.Trim().Split([char]10) | ForEach-Object { '        ' + $_ } }
+      if ($prevRegistry) { $env:npm_config_registry = $prevRegistry } else { Remove-Item Env:npm_config_registry -ErrorAction SilentlyContinue }
+    }
+    $ErrorActionPreference = $eapAdd
+    $installedOk = Test-InstalledOk $profileDir
+    if ($addExit -ne 0 -or $outAdd -match 'managed exclusively' -or -not $installedOk) {
+      if ($addExit -eq 0 -and -not $installedOk) {
+        Say '  [2/3] 命令行的退出码是 0，但插件并没有真正装进 profile。'
+        Say '        （新版 DSH 的 dsh 命令行不解析 plugin 子命令时会这样：打印 web 地址就退出）'
+        Say '        改用「手动安装」兜底…'
+      } else {
+        Say '  [2/3] 命令行被拒绝（desktop profile 仅允许客户端管理），改用「手动安装」…'
+      }
+      Install-Manual $profileDir
+      if (Test-InstalledOk $profileDir) { $addExit = 0 } else { $addExit = 1 }
+    }
+  }
+  if ($prevFetchTimeout) { $env:npm_config_fetch_timeout = $prevFetchTimeout } else { Remove-Item Env:npm_config_fetch_timeout -ErrorAction SilentlyContinue }
+  if ($prevFetchRetries) { $env:npm_config_fetch_retries = $prevFetchRetries } else { Remove-Item Env:npm_config_fetch_retries -ErrorAction SilentlyContinue }
+  if (-not (Test-InstalledOk $profileDir)) {
+    Say '  [x] 安装后校验失败：profile 里没有可用的 xtds-start-dsh'
+    Say '      （bundles 里不会添加它，避免 DSH 启动时加载一个不存在的插件）'
+    Copy-Item (Join-Path $bk.FullName 'package.json') (Join-Path $profileDir 'package.json') -Force
+    Copy-Item (Join-Path $bk.FullName 'pnpm-lock.yaml') (Join-Path $profileDir 'pnpm-lock.yaml') -Force -ErrorAction SilentlyContinue
+    Die '安装失败，已回滚。把上面的输出发到仓库 issue。'
+  }
+
+  Say '  [3/3] 修正 bundles 列表 …'
+  Fix-Bundles $profileDir
+
+  $inst = Join-Path $profileDir ('node_modules\' + $pluginName)
+  if (Test-Path $inst) {
+    $ver = ([System.IO.File]::ReadAllText((Join-Path $inst 'package.json')) | ConvertFrom-Json).version
+    Say ('  装好了：v' + $ver)
+  } else {
+    Say '  [!] node_modules 里没看到 xtds-start-dsh，请检查上面的输出'
+  }
+}
+
+if ($checkpoint -and $checkpoint.bat -and (Test-Path $checkpoint.bat)) {
+  $desk = [Environment]::GetFolderPath('Desktop')
+  if (-not $desk) { $desk = Join-Path $env:USERPROFILE 'Desktop' }
+  if (Test-Path $desk) {
+    Get-ChildItem $desk -Filter '紧急回滚-*.cmd' -File -ErrorAction SilentlyContinue | ForEach-Object {
+      if ($_.FullName -ne $checkpoint.bat) { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+    }
+  }
+  Say ''
+  Say ('[回滚保护] 新版安装成功，桌面回滚按钮已更新为：' + (Split-Path -Leaf $checkpoint.bat))
+  Say '           旧按钮已自动清理（下次更新会自动替换，不会越积越多）。'
+}
+
+Say ''
+if ($CheckOnly) {
+  Say '检查完毕 —— 没有修改任何东西。确认无误后双击「安装.cmd」正式安装。'
+} else {
+  Say '完成 —— 现在打开 DeepSeek Harness Desktop。'
+  Say '打开后确认三件事：'
+  Say '  1) 设置页里多出「启动动画」和「聊天背景」两项'
+  Say '  2) 冷启动会播六幕开机动画'
+  Say '  3) 动画结束后落在聊天底图上（大字横幅可选）'
+  Say ''
+  Say '出问题（黑屏/点不动）：任务管理器结束全部 DeepSeek Harness 进程，然后双击「卸载.cmd」。'
+}

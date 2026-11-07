@@ -1,0 +1,12 @@
+{
+  "id": "xtds-start-dsh",
+  "name": "XTDS 暖白启动动画",
+  "nameEn": "XTDS Warm Archive Boot",
+  "author": "XTDS（基于沈宏宏 / LeeRolling）",
+  "description": "XTDS 私有定制版 DSH 启动动画：默认只播暖白技术档案序章，第二幕揭示引擎保留，可在设置页导入本机形象；不发布 npm，不提交商店。",
+  "descriptionEn": "Private XTDS fork of the DSH boot suite: plays only the warm-white dossier opening by default, retains the optional act-two reveal engine, and imports user images locally. No npm or store publication.",
+  "upstream": "https://github.com/LeeRolling/dsh-boot-suite",
+  "category": "ui",
+  "subcategory": "render",
+  "status": "private-not-for-submission"
+}

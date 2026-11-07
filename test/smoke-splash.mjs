@@ -1,0 +1,568 @@
+/* ============================================================================
+ * 启动动画初始化冒烟测试 —— 用最小 DOM 桩把 splash.js 完整跑一遍
+ *
+ * 为什么需要它：黑幕兜底是"贴在第一屏上的"，一旦 splash.js 初始化抛异常，
+ * dsu-boot 就永远摘不掉 → 用户看到永久黑屏。这个测试专门守住那条线：
+ *   1) 初始化不许抛异常
+ *   2) 跑完必须摘掉 dsu-boot（否则就是黑屏）
+ *   3) 暴露 __DSH_STARTUP_API__
+ *   4) JS 里用到的每个选择器，都必须在生成出来的 markup 里真实存在
+ *      —— 这条能抓到"接了个不存在的元素"这类手误
+ *   5) 没有 speechSynthesis 的环境（Node / 老浏览器）也必须能跑
+ *
+ * 用法：node test/smoke-splash.mjs
+ * ========================================================================== */
+import fs from 'node:fs'
+import vm from 'node:vm'
+import { fileURLToPath } from 'node:url'
+
+const BUNDLE = fileURLToPath(new URL('../lib/splash.js', import.meta.url))
+
+let pass = 0
+let fail = 0
+function check(label, ok, extra) {
+  if (ok) { pass++; console.log('  ok   ' + label) }
+  else { fail++; console.log('  FAIL ' + label + (extra !== undefined ? '  → ' + extra : '')) }
+}
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
+/* ── 最小 DOM 桩 ─────────────────────────────────────────────────────────── */
+function makeEl(tag) {
+  const el = {
+    tagName: tag,
+    _cls: '',
+    _text: '',
+    _html: '',
+    style: { setProperty() {}, removeProperty() {} },
+    dataset: {},
+    children: [],
+    hidden: false,
+    offsetWidth: 1,
+    parentNode: null,
+    appendChild(c) { this.children.push(c); if (c) c.parentNode = this; return c },
+    insertBefore(c) { this.children.unshift(c); if (c) c.parentNode = this; return c },
+    removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); return c },
+    setAttribute() {},
+    getAttribute() { return null },
+    addEventListener() {},
+    removeEventListener() {},
+    dispatchEvent() {},
+    animate() { return { cancel() {}, finish() {} } },
+    getTotalLength() { return 120 },
+    querySelector(sel) { return lookup(sel) },
+    querySelectorAll() { return [] },
+    focus() {},
+    contains() { return false },
+  }
+  Object.defineProperty(el, 'className', {
+    get() { return el._cls },
+    set(v) { el._cls = v == null ? '' : String(v) },
+  })
+  Object.defineProperty(el, 'textContent', {
+    get() { return el._text },
+    set(v) { el._text = v == null ? '' : String(v) },
+  })
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return el._html },
+    set(v) { el._html = v == null ? '' : String(v); MARKUP = el._html },
+  })
+  el.classList = {
+    add(...cs) { cs.forEach((c) => { el._classAdds.push(c); if (!el._cls.split(' ').includes(c)) el._cls = (el._cls + ' ' + c).trim() }) },
+    remove(...cs) { cs.forEach((c) => { el._cls = el._cls.split(' ').filter((x) => x && x !== c).join(' ') }) },
+    toggle(c, on) {
+      const has = el._cls.split(' ').includes(c)
+      const want = on === undefined ? !has : !!on
+      if (want && !has) el.classList.add(c)
+      if (!want && has) el.classList.remove(c)
+    },
+    contains(c) { return el._cls.split(' ').includes(c) },
+  }
+  /* 记录 classList.add 历史：v2.12.1 回归断言「正常路径不再加 dsu-out-content」用 */
+  el._classAdds = []
+  return el
+}
+
+/* markup 里出现过的 class 集合：选择器必须命中它，否则视为"接了个不存在的元素" */
+let MARKUP = ''
+const MISSED = new Set()
+const lookupCache = new Map()
+function lookup(sel) {
+  if (!sel) return null
+  const key = String(sel)
+  if (lookupCache.has(key)) return lookupCache.get(key)
+  const m = /\.([A-Za-z0-9_-]+)/.exec(key)
+  const cls = m ? m[1] : null
+  const found = cls !== null && MARKUP.includes(cls)
+  if (!found) MISSED.add(key)
+  const node = found ? makeEl('div') : null
+  lookupCache.set(key, node)
+  return node
+}
+
+/* ── window / document ───────────────────────────────────────────────────── */
+const spoken = []
+function makeSpeech() {
+  return {
+    /* 故意混入"老拼接合成"音色：David(男) / Zira(女) / Huihui(女)，
+       正确的选择应该跳过它们，挑 Online (Natural) 那两个 */
+    _voices: [
+      { name: 'Microsoft David Desktop - English (United States)', lang: 'en-US', localService: true },
+      { name: 'Microsoft Zira Desktop - English (United States)', lang: 'en-US', localService: true },
+      { name: 'Microsoft Huihui Desktop - Chinese (Simplified)', lang: 'zh-CN', localService: true },
+      { name: 'Microsoft Aria Online (Natural) - English (United States)', lang: 'en-US', localService: false },
+      { name: 'Microsoft Xiaoxiao Online (Natural) - Chinese (Mainland)', lang: 'zh-CN', localService: false },
+    ],
+    getVoices() { return this._voices },
+    speak(u) { spoken.push(u) },
+    cancelCalls: 0,
+    cancel() { this.cancelCalls++; spoken.length = 0 },
+    resume() {},
+    pause() {},
+    addEventListener() {},
+    removeEventListener() {},
+  }
+}
+
+function run(withSpeech, cfgOverride, template, jump, opts) {
+  const o = opts || {}
+  MARKUP = ''
+  MISSED.clear()
+  lookupCache.clear()
+  spoken.length = 0
+
+  const root = makeEl('div')
+  root._cls = 'dsu-root dsu-boot'
+  const head = makeEl('head')
+  const body = makeEl('body')
+  const htmlEl = makeEl('html')
+
+  const documentStub = {
+    readyState: 'complete',
+    head, body,
+    documentElement: htmlEl,
+    getElementById: (id) => (id === 'dsh-startup-root' ? root : null),
+    createElement: (t) => makeEl(t),
+    createElementNS: (_ns, t) => makeEl(t),
+    querySelector: () => null,
+    addEventListener() {},
+    removeEventListener() {},
+  }
+
+  /* v2.12.1 时间线测试要手动推进 rAF：opts.rafQueue=true 时把回调排队，
+     由测试按假时间一帧一帧泵，才能观察「片尾那一帧之前/之后」发生了什么。 */
+  const rafQueue = []
+  const rafMode = !!o.rafQueue
+
+  const timers = []
+  const windowStub = {
+    __DSH_STARTUP__: {
+      enabled: true, mode: 'always', theme: 'light', speed: 1,
+      requireInteraction: true, allowSkip: true,
+      identity: 'JOYCE MOORE', identityId: '0087', accessLevel: '3',
+      /* 只覆盖测试要变的；语速/音调/留白故意留空，好让断言直接校验 splash.js 出厂默认值 */
+      voice: true, voiceLang: 'en', voiceName: '',
+      sound: true, soundVolume: 0.5,
+    },
+    AudioContext: function () {
+      return {
+        state: 'running', currentTime: 0, sampleRate: 48000, destination: {},
+        resume() {},
+        createOscillator() {
+          return { type: '', frequency: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {}, start() {}, stop() {} }
+        },
+        createGain() {
+          return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }
+        },
+        createBuffer(ch, len) { return { getChannelData: () => new Float32Array(len) } },
+        createBufferSource() { return { buffer: null, connect() {}, start() {} } },
+        createBiquadFilter() { return { type: '', frequency: { value: 0 }, Q: { value: 0 }, connect() {} } },
+      }
+    },
+    location: { host: '127.0.0.1:3080', href: 'http://127.0.0.1:3080/' },
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+    sessionStorage: { getItem: () => null, setItem() {} },
+    localStorage: { getItem: () => null, setItem() {} },
+    requestAnimationFrame: rafMode ? (fn) => { rafQueue.push(fn); return rafQueue.length } : (fn) => { fn(); return 1 },
+    cancelAnimationFrame() {},
+    /* 小延时同步执行 —— voiceLead 是 240ms，不这样做 line() 永远开不了口；
+       大延时（动画时间线）照旧入队，测试保持同步可控 */
+    setTimeout: (fn, ms) => {
+      if ((ms || 0) <= 400) { fn(); return -1 }
+      timers.push({ fn, ms })
+      return timers.length
+    },
+    clearTimeout() {},
+    setInterval: () => 1,
+    clearInterval() {},
+    CustomEvent: function (t) { this.type = t },
+  }
+  if (withSpeech) {
+    windowStub.speechSynthesis = makeSpeech()
+    /* 浏览器里 window === globalThis，但沙箱里是两回事：
+       splash.js 检查的是 window.SpeechSynthesisUtterance，所以两边都要挂 */
+    windowStub.SpeechSynthesisUtterance = function (t) {
+      this.text = t; this.rate = 1; this.pitch = 1; this.volume = 1
+    }
+  }
+  windowStub.window = windowStub
+
+  const sandbox = {
+    window: windowStub,
+    document: documentStub,
+    console,
+    Promise, Object, Array, JSON, String, Number, Math, Date, Error, RegExp, isFinite,
+    setTimeout: windowStub.setTimeout,
+    clearTimeout: windowStub.clearTimeout,
+    setInterval: windowStub.setInterval,
+    clearInterval: windowStub.clearInterval,
+    requestAnimationFrame: windowStub.requestAnimationFrame,
+    SpeechSynthesisUtterance: withSpeech
+      ? function (t) { this.text = t; this.rate = 1; this.pitch = 1; this.volume = 1 }
+      : undefined,
+  }
+  sandbox.globalThis = sandbox
+  sandbox.self = sandbox
+
+  /* 配置覆盖必须在跑脚本之前生效 —— splash.js 只在加载时读一次配置 */
+  Object.assign(windowStub.__DSH_STARTUP__, cfgOverride || {})
+  /* 模板同理：运行时在加载时读一次 __DSH_STARTUP_TEMPLATE__ */
+  if (template) windowStub.__DSH_STARTUP_TEMPLATE__ = template
+  if (jump) windowStub.__DSH_STARTUP_JUMP__ = jump
+
+  vm.createContext(sandbox)
+  const src = fs.readFileSync(BUNDLE, 'utf8')
+  let thrown = null
+  try {
+    vm.runInContext(src, sandbox, { filename: 'splash.js' })
+  } catch (e) {
+    thrown = e
+  }
+  return { windowStub, root, head, body, htmlEl, timers, thrown, markup: MARKUP, sandbox, spoken, rafQueue }
+}
+
+/* ── 开跑 ───────────────────────────────────────────────────────────────── */
+console.log('\n[1] 有 speechSynthesis 的环境（Chrome / Edge）')
+let r = run(true)
+check('初始化不抛异常', r.thrown === null, r.thrown && (r.thrown.message + '\n       ' + String(r.thrown.stack).split('\n')[1]))
+check('摘掉了黑幕 dsu-boot（没摘掉 = 永久黑屏）', !r.root.classList.contains('dsu-boot'), '当前 class = ' + r.root._cls)
+check('暴露了 __DSH_STARTUP_API__', !!(r.windowStub.__DSH_STARTUP_API__ && r.windowStub.__DSH_STARTUP_API__.replay))
+check('API 上有 replay / skip / finish', ['replay', 'skip', 'finish'].every((k) => typeof (r.windowStub.__DSH_STARTUP_API__ || {})[k] === 'function'))
+check('API 上有 pause / resume / paused（编辑器预览用）', (function () {
+  const a = r.windowStub.__DSH_STARTUP_API__
+  return typeof a.pause === 'function' && typeof a.resume === 'function' && typeof a.paused === 'function'
+})())
+check('没有 FAILED 兜底标记', r.windowStub.__DSH_STARTUP_FAILED__ !== true)
+
+console.log('\n[2] 生成出来的 markup 完整性')
+for (const cls of [
+  'dsu-plate', 'dsu-vignette', 'dsu-black-inner', 'dsu-wash', 'dsu-brand-1', 'dsu-frame',
+  'dsu-scanline', 'dsu-corner', 'dsu-slats', 'dsu-voice', 'dsu-meta', 'dsu-status-zh',
+  'dsu-sub-en', 'dsu-rule', 'dsu-logo', 'dsu-dots', 'dsu-idline', 'dsu-reticle', 'dsu-hex',
+  'dsu-welcome', 'dsu-w1', 'dsu-btn', 'dsu-card', 'dsu-skip', 'dsu-foot', 'dsu-sub-zh',
+  'dsu-progress', 'dsu-bloom', 'dsu-streak', 'dsu-flash', 'dsu-tvglitch',
+]) {
+  check('markup 含 .' + cls, r.markup.includes(cls))
+}
+check('不再生成按键提示 .dsu-hint', !r.markup.includes('dsu-hint'))
+
+console.log('\n[3] JS 用到的每个选择器都真实存在')
+check('没有落空的选择器', MISSED.size === 0, [...MISSED].join(', '))
+
+console.log('\n[4] 没有 speechSynthesis 的环境（老浏览器 / 隐私模式）')
+r = run(false)
+check('初始化不抛异常', r.thrown === null, r.thrown && r.thrown.message)
+check('照样摘掉黑幕', !r.root.classList.contains('dsu-boot'), '当前 class = ' + r.root._cls)
+check('暴露了 API', !!r.windowStub.__DSH_STARTUP_API__)
+
+console.log('\n[5] 音色挑选：必须跳过拼接合成音色，挑神经网络女声')
+r = run(true)
+let api = r.windowStub.__DSH_STARTUP_API__
+check('默认 voiceName 留空 = 自动挑', api.config.voiceName === '')
+api.speak('Access permission required.')
+let u = r.spoken[r.spoken.length - 1]
+let vname = u && u.voice ? u.voice.name : '(未设置 voice)'
+check('英文挑到 Aria Online (Natural)，而不是 David/Zira', /aria/i.test(vname) && /natural|online/i.test(vname), vname)
+check('不是男声 David', !/david/i.test(vname), vname)
+
+r = run(true, { voiceLang: 'zh' })
+api = r.windowStub.__DSH_STARTUP_API__
+api.speak('Access permission required.', '需要访问许可')
+u = r.spoken[r.spoken.length - 1]
+vname = u && u.voice ? u.voice.name : '(未设置 voice)'
+check('中文挑到 Xiaoxiao Online (Natural)，而不是 Huihui', /xiaoxiao/i.test(vname) && /natural|online/i.test(vname), vname)
+
+r = run(true, { voiceLang: 'both' })
+api = r.windowStub.__DSH_STARTUP_API__
+api.speak('Verification passed.', '验证通过')
+const names = r.spoken.map((x) => (x.voice ? x.voice.name : '')).filter(Boolean)
+check('中英各念一遍 = 排了两条 utterance', r.spoken.length === 2, String(r.spoken.length))
+check('中文用中文音色、英文用英文音色', names.some((n) => /xiaoxiao/i.test(n)) && names.some((n) => /aria/i.test(n)), names.join(' | '))
+
+console.log('\n[6] 播报语调节奏与名字念法')
+r = run(true)
+api = r.windowStub.__DSH_STARTUP_API__
+api.speak('Identity verification.')
+u = r.spoken[r.spoken.length - 1]
+check('语速落在电影旁白档（0.8–0.95，比朗读慢）', u.rate >= 0.8 && u.rate <= 0.95, String(u.rate))
+check('音调压低（0.78–0.92，深沉）', u.pitch >= 0.78 && u.pitch <= 0.92, String(u.pitch))
+check('名字全大写会转 Title Case（避免逐字母念）', api.speakName('JOYCE MOORE') === 'Joyce Moore', api.speakName('JOYCE MOORE'))
+check('中文名字原样不动', api.speakName('琉璃') === '琉璃', api.speakName('琉璃'))
+check('API 暴露了 voice 供设置页显示', typeof api.voice === 'string')
+
+console.log('\n[7] 动画不许掐断语音（这是这一版的核心诉求）')
+r = run(true)
+api = r.windowStub.__DSH_STARTUP_API__
+const speech = r.windowStub.speechSynthesis
+check('voiceLead 默认 240ms（提示音后留一拍再开口）', api.config.voiceLead === 240, String(api.config.voiceLead))
+speech.cancelCalls = 0
+api.speak('Access permission required.')
+api.speak('Identity verification.')
+api.speak('Access request received.')
+check('连播三句，cancel 一次都没调用（队列顺序播报）', speech.cancelCalls === 0, 'cancel ' + speech.cancelCalls + ' 次')
+check('三句都排进了队列', r.spoken.length === 3, String(r.spoken.length))
+speech.cancelCalls = 0
+api.skip()
+check('按跳过时才真的掐断（cancel 1 次）', speech.cancelCalls === 1, 'cancel ' + speech.cancelCalls + ' 次')
+
+console.log('\n[8] 终幕用真声欢迎语（来自 Video Project 3 的 line-6）')
+{
+  const src = fs.readFileSync(BUNDLE, 'utf8')
+  check('全程没有 voice.tts( 调用（不再用 TTS 念白）', !/voice\.tts\(/.test(src))
+  check('终幕挂了 line-6 素材', /voice\.line\(null, null, 'line-6'\)/.test(src))
+  check('终幕欢迎语按 welcomeDelay 延迟后播放', /C\.welcomeDelay/.test(src) && /welcomeDelay = Math\.max\(0, Math\.min\(3000/.test(src))
+  check('揭幕前会等欢迎语播完', /\.then\(function \(\) \{ return welcome \}\)/.test(src))
+  check('预加载包含 line-6', /ensureAsset\('line-6'\)/.test(src))
+  check('五步仍然各自挂着真声素材', (src.match(/audio: 'line-/g) || []).length === 5)
+  check('总共 6 份人声素材被引用', (src.match(/'line-[1-6]'/g) || []).length >= 6)
+  check('配音音色可切换：voicePack 为 f–k 时走 voice:<pack>:line-N 路由',
+    /C\.voicePack/.test(src) && /'voice:' \+ pack \+ ':' \+ asset/.test(src)
+    && /tplAssets && tplAssets\[asset\]/.test(src))
+  check('全局 line-N 无人声包时也改走 voice 路由（不再请求已删除的 lib/assets）',
+    src.includes("'/dsh-startup/voice/' + pack + '/' + name + '.mp3'") && src.includes("if (pack === 'builtin') pack = 'f'"))
+  check('5 套声音效果预设都在，播放链路按 C.voiceFx 叠加',
+    ['ai-mech', 'robot', 'radio', 'oldtv', 'dark'].every((k) => src.includes("'" + k + "':"))
+    && /playAssetAndWait\(useAsset, 0\.85, isGlobalLine \? fx : 'none'\)/.test(src))
+}
+
+console.log('\n[9] 模板：分幕可以自定义（1~24 幕，缺字段回落内置）')
+{
+  /* 3 幕模板：只给一部分字段，验证回落与进度自动均分 */
+  const tpl3 = {
+    id: 'demo-3',
+    steps: [
+      { zh: '第一幕', en: 'ACT ONE', audio: 'line-1', action: 'auto', hold: 600 },
+      { zh: '第二幕', en: 'ACT TWO', audio: 'line-2' },
+      { zh: '第三幕', en: 'ACT THREE' }
+    ]
+  }
+  const r3 = run(true, null, tpl3)
+  check('3 幕模板初始化不抛异常', r3.thrown === null, r3.thrown && r3.thrown.message)
+  const api3 = r3.windowStub.__DSH_STARTUP_API__
+  check(' exposing steps 与 template id', !!api3 && Array.isArray(api3.steps) && api3.template === 'demo-3', api3 && api3.template)
+  check('幕数 = 3（模板说了算，不是写死的 6）', api3.steps.length === 3, String(api3.steps.length))
+  check('第一幕文案来自模板', api3.steps[0].zh === '第一幕' && api3.steps[0].en === 'ACT ONE')
+  check('缺的字段回落成非空默认值', !!api3.steps[0].log && !!api3.steps[0].badge && !!api3.steps[0].say)
+  check('没写进度时按位置均分（3 幕 + 终幕 = 4 段）',
+    Math.abs(api3.steps[0].progress - 0.25) < 0.001 && Math.abs(api3.steps[2].progress - 0.75) < 0.001,
+    api3.steps.map((s) => s.progress).join(','))
+  check('非法 action 被夹成 auto', (function () {
+    const bad = run(true, null, { id: 'bad', steps: [{ zh: 'x', action: 'DROP TABLE' }] })
+    return bad.windowStub.__DSH_STARTUP_API__.steps[0].action === 'auto'
+  })())
+  check('幕数上限 24（30 幕模板被夹取）', (function () {
+    const many = { id: 'many', steps: new Array(30).fill(0).map((_, i) => ({ zh: '幕' + i })) }
+    const rm = run(true, null, many)
+    return rm.windowStub.__DSH_STARTUP_API__.steps.length === 24
+  })())
+  check('空 steps 回落内置 5 幕', (function () {
+    const re = run(true, null, { id: 'empty', steps: [] })
+    return re.windowStub.__DSH_STARTUP_API__.steps.length === 5
+  })())
+  check('steps 不是数组也不炸（回落内置）', (function () {
+    const rn = run(true, null, { id: 'bad2', steps: 'nope' })
+    return rn.thrown === null && rn.windowStub.__DSH_STARTUP_API__.steps.length === 5
+  })())
+  check('跳转播放（只播第 3 幕）不抛异常', (function () {
+    const rj = run(true, null, null, { start: 2, count: 1 })
+    return rj.thrown === null && !!rj.windowStub.__DSH_STARTUP_API__
+  })())
+  check('跳转起点越界会被夹到合法范围（不抛）', (function () {
+    const rj = run(true, null, null, { start: 99, count: 3 })
+    return rj.thrown === null && !!rj.windowStub.__DSH_STARTUP_API__
+  })())
+  check('没选模板时 template 为空、五幕照旧', (function () {
+    const rb = run(true)
+    const a = rb.windowStub.__DSH_STARTUP_API__
+    return a.template === '' && a.steps.length === 5
+  })())
+  check('内置第二步是自动身份卡（无按钮、2 秒、带电视花屏）', (function () {
+    const a = run(true).windowStub.__DSH_STARTUP_API__
+    const s = a.steps[1]
+    return s.action === 'auto' && s.card === true && s.tvGlitch === true && s.hold === 2000 && s.holdExact === true
+  })())
+  check('模板显式 card/tvGlitch/holdExact 会被规范化保留', (function () {
+    const rc = run(true, null, { id: 'card-test', steps: [
+      { zh: 'a', action: 'auto' },
+      { zh: 'b', action: 'auto', card: true, tvGlitch: true, hold: 2000, holdExact: true }
+    ] })
+    const s = rc.windowStub.__DSH_STARTUP_API__.steps[1]
+    return s.card === true && s.tvGlitch === true && s.holdExact === true
+  })())
+  check('自动幕有不低于 1 秒的实际墙钟下限', (function () {
+    const src = fs.readFileSync(BUNDLE, 'utf8')
+    return /var MIN_AUTO_HOLD_MS = 1000/.test(src)
+      && /Math\.max\(MIN_AUTO_HOLD_MS, ms\(base\)\)/.test(src)
+      && /stepHoldMs\(step\)/.test(src)
+  })())
+  check('旧 action:"confirm" 仍自动补出卡片（兼容旧模板）', (function () {
+    const rc = run(true, null, { id: 'legacy-confirm', steps: [
+      { zh: 'a', action: 'auto' },
+      { zh: 'b', action: 'confirm' }
+    ] })
+    return rc.windowStub.__DSH_STARTUP_API__.steps[1].card === true
+  })())
+}
+
+console.log('\n[10] 三段转场钩子（v2.12.0，splash.js 转场实现由 teammate 并行落地）')
+{
+  r = run(true)                                    // 缺省配置：完全没有 transition 字段
+  check('缺省配置（无 transition 字段）初始化不抛异常', r.thrown === null, r.thrown && r.thrown.message)
+  check('缺省配置不往 body 上新增覆盖层（全部 DOM 仍在 #dsh-startup-root 内）',
+    r.body.children.length === 0, r.body.children.map((c) => c.tagName || c._cls).join(','))
+  check('缺省配置照常暴露 __DSH_STARTUP_API__', !!(r.windowStub.__DSH_STARTUP_API__ && r.windowStub.__DSH_STARTUP_API__.replay))
+
+  const rTx = run(true, {
+    transitionIn: 'glitch', transitionJoin: 'flash', transitionOut: 'scanline',
+    transitionMs: 1200, transitionDir: 'up',
+  })
+  check('配置了三段转场（glitch/flash/scanline + 1200ms + up）也不抛异常',
+    rTx.thrown === null, rTx.thrown && rTx.thrown.message)
+  check('配置转场后照常暴露 API', !!(rTx.windowStub.__DSH_STARTUP_API__ && rTx.windowStub.__DSH_STARTUP_API__.replay))
+
+  const meta = r.windowStub.__DSH_TRANSITION_META__
+  const TYPES = ['dissolve', 'flash', 'glitch', 'scanline', 'slide', 'iris', 'black', 'none']
+  const DIRS = ['left', 'right', 'up', 'down']
+  if (!meta) {
+    console.log('  skip  window.__DSH_TRANSITION_META__ 尚未落地（splash.js 转场实现并行中）—— 钩子契约断言本轮跳过，等它完成后重跑即可变绿')
+  } else {
+    check('暴露 __DSH_TRANSITION_META__ 对象', typeof meta === 'object')
+    check('meta.types 恰为 8 种转场', Array.isArray(meta.types) && meta.types.length === TYPES.length && TYPES.every((t) => meta.types.includes(t)),
+      JSON.stringify(meta.types))
+    check('meta.dirs 恰为 4 个方向', Array.isArray(meta.dirs) && meta.dirs.length === DIRS.length && DIRS.every((d) => meta.dirs.includes(d)),
+      JSON.stringify(meta.dirs))
+    check('normalize 是函数', typeof meta.normalize === 'function')
+    check('normalizeDir 是函数', typeof meta.normalizeDir === 'function')
+    if (typeof meta.normalize === 'function') {
+      let allOk = true
+      for (const t of TYPES) if (meta.normalize(t) !== t) { allOk = false; break }
+      check('normalize：8 种合法值原样返回', allOk)
+      check('normalize：非法值回落 dissolve',
+        meta.normalize('bogus') === 'dissolve' && meta.normalize('') === 'dissolve' &&
+        meta.normalize(undefined) === 'dissolve',
+        JSON.stringify([meta.normalize('bogus'), meta.normalize(''), meta.normalize(undefined)]))
+    }
+    if (typeof meta.normalizeDir === 'function') {
+      let allOk = true
+      for (const d of DIRS) if (meta.normalizeDir(d) !== d) { allOk = false; break }
+      check('normalizeDir：4 个合法方向原样返回', allOk)
+      check('normalizeDir：非法值回落 left',
+        meta.normalizeDir('diagonal') === 'left' && meta.normalizeDir(undefined) === 'left',
+        JSON.stringify([meta.normalizeDir('diagonal'), meta.normalizeDir(undefined)]))
+    }
+    if (typeof meta.normalizeMs === 'function') {
+      check('normalizeMs：合法值原样返回、越界夹到 200–2000、非法回落 600',
+        meta.normalizeMs(600) === 600 && meta.normalizeMs(50) === 200 &&
+        meta.normalizeMs(9999) === 2000 && meta.normalizeMs('abc') === 600,
+        JSON.stringify([meta.normalizeMs(600), meta.normalizeMs(50), meta.normalizeMs(9999), meta.normalizeMs('abc')]))
+    }
+    /* 只读调试状态：缺省配置下不许留下任何覆盖层 */
+    const state = r.windowStub.__DSH_TRANSITION_STATE__
+    check('暴露只读调试状态 __DSH_TRANSITION_STATE__（overlays / active）',
+      !!state && 'overlays' in state && 'active' in state, state ? Object.keys(state).join(',') : 'undefined')
+    check('缺省配置：初始化后没有转场覆盖层残留（overlays = 0）', state && state.overlays === 0, state && String(state.overlays))
+    check('缺省配置：没有活跃覆盖层（active = 0）', state && state.active === 0, state && String(state.active))
+  }
+}
+
+console.log('\n[11] v2.12.1：时间线结束不再内嵌淡出（两幕独立，换场只归转场引擎）')
+{
+  const src = fs.readFileSync(BUNDLE, 'utf8')
+  const cssSrc = fs.readFileSync(fileURLToPath(new URL('../lib/splash.css', import.meta.url)), 'utf8')
+
+  /** 按大括号配对从源码里抠出一个具名函数的完整函数体 */
+  function braceBlock(source, from) {
+    const brace = source.indexOf('{', from)
+    if (brace < 0) return ''
+    let depth = 0
+    for (let i = brace; i < source.length; i++) {
+      const ch = source[i]
+      if (ch === '{') depth++
+      else if (ch === '}') { depth--; if (depth === 0) return source.slice(brace, i + 1) }
+    }
+    return ''
+  }
+  const tlAt = src.indexOf('function runTimeline(')
+  const timelineBody = tlAt >= 0 ? braceBlock(src, tlAt) : ''
+  /* 只看代码、不看注释 —— 修复注释里会提到 dsu-out-content/220（说明"已删"），不能误判 */
+  const stripComments = (s) => String(s || '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+  const timelineCode = stripComments(timelineBody)
+  check('lib/splash.js 里能找到 runTimeline 函数', !!timelineBody)
+
+  /* 静态①：runTimeline 里彻底没有内嵌淡出（v2.12.0 的 dsu-out-content 已删） */
+  check('★★ runTimeline 函数体里不再有 dsu-out-content（时间线结束不再内嵌淡出）',
+    !!timelineCode && !timelineCode.includes('dsu-out-content'),
+    timelineCode ? (timelineCode.match(/.*dsu-out-content.*/) || [''])[0].trim() : 'no body')
+
+  /* 静态②：片尾分支直接 resolve，不再 later(...220) 尾巴 */
+  let endBlock = ''
+  if (timelineBody) {
+    const at = timelineBody.indexOf('elapsed >= duration')
+    if (at >= 0) endBlock = braceBlock(timelineBody, at)
+  }
+  const endCode = stripComments(endBlock)
+  check('★ 片尾分支直接 resolve()，不再等 220ms 尾巴',
+    !!endCode && /resolve\(\)/.test(endCode) && !/220/.test(endCode) && !/later\(/.test(endCode),
+    endCode.replace(/\s+/g, ' ').slice(0, 160))
+
+  /* 静态③：flash 的 cover 关键帧必须单调不透明（v2.12.0 中间跌到 86% → 会透出第二幕画面） */
+  function keyframeBlock(source, name) {
+    const at = source.indexOf('@keyframes ' + name)
+    return at < 0 ? '' : braceBlock(source, at)
+  }
+  function opacitySteps(block) {
+    return [...block.matchAll(/(\d+(?:\.\d+)?)%\s*\{\s*opacity:\s*([\d.]+)/g)]
+      .map((m) => ({ at: Number(m[1]), v: Number(m[2]) })).sort((a, b) => a.at - b.at)
+  }
+  const inSteps = opacitySteps(keyframeBlock(cssSrc, 'dsu-trans-flash-in'))
+  const outSteps = opacitySteps(keyframeBlock(cssSrc, 'dsu-trans-flash-out'))
+  const monotonic = (steps, up) => steps.length >= 2 && steps.every((s, i) => i === 0 || (up ? s.v >= steps[i - 1].v : s.v <= steps[i - 1].v))
+  const firstFullAt = inSteps.find((s) => s.v >= 0.999)
+  check('★★ 闪白 cover 关键帧单调不透明（中途不再回落透出第二幕）',
+    monotonic(inSteps, true) && !!inSteps.length && inSteps[0].v === 0 && !!firstFullAt && firstFullAt.at <= 20,
+    JSON.stringify(inSteps))
+  check('★ 闪白 reveal 关键帧单调变透明（揭开过程也不抖动）',
+    monotonic(outSteps, false) && !!outSteps.length && outSteps[outSteps.length - 1].v === 0,
+    JSON.stringify(outSteps))
+
+  /* 运行时「换场紧贴片尾」的受控 rAF 测试在 test/smoke-splash-tl.mjs —— 那个文件需要 await 推微任务，
+     而本文件是纯同步的（混入 await 会让其它用例里未完成动画链的延迟异常提前跑出来）。 */
+}
+
+console.log('\n[12] P1 早期点击：扫描线结束 +100ms 才切页')
+{
+  const src = fs.readFileSync(BUNDLE, 'utf8')
+  const grantAt = src.indexOf("if (step.action === 'grant'")
+  const hexAt = grantAt >= 0 ? src.indexOf('if (step.hex)', grantAt) : -1
+  const grantBlock = grantAt >= 0 && hexAt > grantAt ? src.slice(grantAt, hexAt) : ''
+  check('能找到 P1 授权分支', !!grantBlock)
+  check('扫描线结束后保留 100ms 切页余量', /SCANLINE_EXIT_GRACE_MS = 100/.test(src))
+  check('扫描线用 animationend 取真实结束时间', /addEventListener\('animationend', onEnd\)/.test(src) && /scanlineGate/.test(src))
+  check('P1 显示按钮后立即挂 waitAction，不再先等 520ms', !!grantBlock && /showAction\(step\)[\s\S]{0,260}waitAction\(\)/.test(grantBlock) && !/wait\(520\)/.test(grantBlock))
+  check('P1 点击后按 scanGate 切页，不再阻塞等待语音', !!grantBlock && /return scanGate/.test(grantBlock) && !/return spoke/.test(grantBlock))
+  check('P1 不再在点击后无条件追加 320ms 等待', !!grantBlock && !/then\(function \(\) \{ return wait\(ms\(320\)\) \}\)/.test(grantBlock))
+}
+
+console.log('\n============================')
+console.log(`  通过 ${pass} / 失败 ${fail}`)
+console.log('============================\n')
+process.exit(fail === 0 ? 0 : 1)
