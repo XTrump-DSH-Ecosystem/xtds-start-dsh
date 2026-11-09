@@ -38,10 +38,9 @@
   `DSH_STORE_URL` 才启用，更新资产只接受 `xtds-start-dsh-win*.zip`。
 - **署名保留**：MIT `LICENSE`、上游仓库链接、沈宏宏暖白视觉署名、
   LeeRolling 上游维护署名均保留；详见 `CREDITS.md`。
-- **许可文件**：保留沈宏宏的原始 MIT 版权声明，并追加
-  `Copyright (c) 2026 Xavier Trump`；`LICENSE` 现已分栏标注
-  **原始作品（沈宏宏）** 与 **XTDS fork / 二次创作（Xavier Trump）**，
-  并明确后者仅覆盖 fork 修改与新增部分，不改变上游 MIT 授权正文。
+- **许可证元数据修复**：`LICENSE` 恢复为标准 MIT 模板，顶部保留沈宏宏与
+  Xavier Trump 两行版权声明，使 GitHub 能识别为 MIT；原始作品 / 二次创作范围
+  与不主张原始视觉的说明移至 `NOTICE.md`，不改变 MIT 授权正文。
 - **验证工具**：新增 `tools/visual-check.mjs` 与 `tools/fixtures/test-character.png.b64`，
   使用临时 `DSH_HOME` 和无头 Edge 检查默认暖白、占位、导入、缺图回退与运行时异常。
 - **文档精简**：根目录只保留 `README.md`、`README.en.md`、`INSTALL.md`、

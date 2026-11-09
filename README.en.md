@@ -176,11 +176,10 @@ Any test that touches DSH data must use a temporary `DSH_HOME` and clean it up.
 
 ## License and credits
 
-- Code: MIT, inherited from upstream `LICENSE`.
-- `LICENSE` separates the **Original work** copyright (沈宏宏) from the
-  **XTDS fork / derivative work** copyright (Xavier Trump). The latter covers
-  only the fork's modifications and additions; it does not claim authorship of
-  the original visual or narrative.
+- Code: MIT, inherited from upstream `LICENSE`; the file keeps the canonical
+  MIT template so GitHub can detect it as MIT.
+- See [NOTICE.md](NOTICE.md) for the original-work / derivative-work scope.
+  `LICENSE` keeps both the 沈宏宏 and Xavier Trump copyright lines.
 - Warm-white “technical dossier” visual and narrative: 沈宏宏
   (@6shenhonghong9), original project
   [dsh-startup-screen](https://github.com/6shenhonghong9/dsh-startup-screen).

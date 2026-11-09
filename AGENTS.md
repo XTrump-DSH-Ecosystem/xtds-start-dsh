@@ -118,12 +118,12 @@ PowerShell 里 `$home` / `$HOME` 是只读自动变量，不能拿来当临时�
 - 来源与修改说明：`CREDITS.md`
 - 历史：`CHANGELOG.md` 只记录本 fork `0.1.0` 及以后；上游历史链接到上游仓库，
   不再把 2.x 条目复制进本仓库。
-- 许可：`LICENSE` 必须分栏保留并区分沈宏宏的 **原始作品** 版权与
-  `Xavier Trump` 的 **XTDS fork / 二次创作** 版权；不得把两者混成同一作者。
+- 许可：`LICENSE` 必须保持标准 MIT 模板，顶部保留沈宏宏与 Xavier Trump 两行版权；
+  版权范围与二次创作说明放 `NOTICE.md`，不得把原始视觉说成 XTDS 原创。
 - 维护文档：`docs/模板格式.md`、`docs/DSH大版本升级兼容性检查清单.md`。
 - 根目录文档保持精简：`README.md`、`README.en.md`、`INSTALL.md`、`CREDITS.md`、
-  `CHANGELOG.md`、`AGENTS.md`；不要重新加入上游阶段笔记、工单、商店申请材料
-  或过时音频字段说明。
+  `CHANGELOG.md`、`AGENTS.md`、`NOTICE.md`；不要重新加入上游阶段笔记、工单、
+  商店申请材料或过时音频字段说明。
 - 发布物料（分享文案、B 站文案等）放在本机 `03-发布包/`，不要提交到公开仓库。
 - 安装文案不得引用上游 Release 下载地址，也不得把鲸鱼娘写成默认第二幕；
   GitHub 直装应使用本 fork 仓库地址。

@@ -43,6 +43,7 @@
     "INSTALL.md",
     "CREDITS.md",
     "CHANGELOG.md",
+    "NOTICE.md",
     "LICENSE"
   ],
   "scripts": {

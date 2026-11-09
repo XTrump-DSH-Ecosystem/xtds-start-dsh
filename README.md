@@ -199,9 +199,9 @@ docs/evidence/               当前视觉验收截图
 
 ## 许可与署名
 
-- 代码：MIT，沿用上游 `LICENSE`。
-- `LICENSE` 分栏标注：**原始作品**版权归沈宏宏；**XTDS fork / 二次创作**
-  版权归 Xavier Trump，仅覆盖 fork 的修改与新增部分，不主张原始视觉为 XTDS 原创。
+- 代码：MIT，沿用上游 `LICENSE`；`LICENSE` 保持标准 MIT 模板，GitHub 可识别为 MIT。
+- 原始作品 / 二次创作的版权范围与不主张原始视觉的说明见 [NOTICE.md](NOTICE.md)；
+  `LICENSE` 顶部保留沈宏宏与 Xavier Trump 两行版权声明。
 - 暖白「技术档案」视觉与叙事：沈宏宏（@6shenhonghong9），原作
   [dsh-startup-screen](https://github.com/6shenhonghong9/dsh-startup-screen)。
 - 上游合并、修复与维护：LeeRolling，

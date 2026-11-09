@@ -69,7 +69,8 @@ const required = [
   'docs/evidence/03-character-imported-test.png',
   'docs/evidence/04-character-missing-fallback.png',
   'LICENSE',
-  'CREDITS.md'
+  'CREDITS.md',
+  'NOTICE.md'
 ]
 for (const rel of required) check('required file: ' + rel, exists(rel))
 for (const rel of ['docs/模板格式.md', 'docs/DSH大版本升级兼容性检查清单.md']) {
@@ -190,17 +191,26 @@ for (const needle of ['xtds-start-dsh-win.zip', 'xtds-start-dsh.tgz', 'SHA256SUM
 
 console.log('\n[7] attribution / license')
 const license = read('LICENSE')
+const notice = read('NOTICE.md')
+check('LICENSE starts with the canonical MIT heading', /^MIT License\r?\n/.test(license))
 check('LICENSE keeps 沈宏宏 copyright', /Copyright \(c\) 2026 沈宏宏/.test(license), license.split(/\r?\n/)[2])
-check('LICENSE separates original work and derivative-work copyright',
-  /Original work（原始作品）:[\s\S]*Copyright \(c\) 2026 沈宏宏[\s\S]*XTDS fork \/ derivative work（二次创作）:[\s\S]*Copyright \(c\) 2026 Xavier Trump/.test(license))
-check('LICENSE says the fork does not claim the original visual',
-  /does not claim authorship of the original warm-white visual/i.test(license))
+check('LICENSE keeps Xavier Trump copyright', /Copyright \(c\) 2026 Xavier Trump/.test(license))
+check('LICENSE keeps the standard MIT permission grant',
+  /Permission is hereby granted, free of charge/.test(license) &&
+  /THE SOFTWARE IS PROVIDED "AS IS"/.test(license))
+check('LICENSE is not polluted by custom derivative-work prose',
+  !/Original work|XTDS fork \/ derivative work|does not claim authorship/i.test(license))
+check('NOTICE explains original work and derivative work',
+  /原始作品/.test(notice) && /二次创作/.test(notice) &&
+  /沈宏宏/.test(notice) && /Xavier Trump/.test(notice))
+check('NOTICE says the fork does not claim the original visual',
+  /不主张暖白片头的原始视觉/.test(notice))
+check('NOTICE links the upstream project', /github\.com\/LeeRolling\/dsh-boot-suite/.test(notice))
 const credits = read('CREDITS.md')
 check('CREDITS links upstream source', /github\.com\/LeeRolling\/dsh-boot-suite/.test(credits))
 check('CREDITS credits 沈宏宏', /沈宏宏/.test(credits))
 check('CREDITS documents XTDS modifications', /XTDS/.test(credits))
-check('CREDITS explains the two copyright scopes',
-  /原始作品（沈宏宏）/.test(credits) && /二次创作（Xavier Trump）/.test(credits))
+check('CREDITS points to NOTICE for the copyright scopes', /NOTICE\.md/.test(credits))
 check('character NOTICE says it ships no ready-made character', /不包含任何现成角色/.test(read('templates/xtds-character-reveal/NOTICE.md')))
 
 console.log('\n[7b] identity example keeps the public defaults')
@@ -237,6 +247,7 @@ check('package files include both preview pages and the template snapshot',
   pkg.files.includes('preview/archive-warm.js') &&
   pkg.files.includes('config') &&
   pkg.files.includes('docs/evidence'))
+check('package files include NOTICE.md', pkg.files.includes('NOTICE.md'))
 
 console.log('\n[9] GitHub direct install is documented')
 const readmeZh = read('README.md')
